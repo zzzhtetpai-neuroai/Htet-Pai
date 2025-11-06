@@ -28,19 +28,6 @@ R = np.array([[0,1,0,0,0,0,0,0,0,0,0,0],
               [0,0,0,0,0,1,0,0,1,0,1,0],
               [0,0,0,0,0,0,0,0,0,1,0,1],
               [0,0,0,0,0,0,0,1,0,0,1,0]])
-#Initialize Q-matrix
-Q=np.array(np.zeros((12,12)))
-
-#Training the agent
-for i in range(1000):
-    current_state=np.random.randint(0,12)
-    playable_actions=[]
-    for j in range(12):
-        if R[current_state,j]>0:
-            playable_actions.append(j)
-    next_state=np.random.choice(playable_actions)
-    TD=R[current_state,next_state]+gamma*Q[next_state,np.argmax(Q[next_state,:])]-Q[current_state,next_state]
-    Q[current_state,next_state]=Q[current_state,next_state]+alpha*TD
 
 
 #mapping states to locations
@@ -51,8 +38,9 @@ state_to_location={state:location for location,state in location_to_state.items(
 #Function to get the optimal route
 def route(start_location,end_location):
     R_new=np.copy(R)
-    end_state=location_to_state[end_location]
-    R_new[end_state,end_state]=1000
+    ending_state=location_to_state[end_location]
+    R_new[ending_state,ending_state]=1000
+    Q=np.array(np.zeros((12,12)))
     for i in range(1000):
         current_state=np.random.randint(0,12)
         playable_actions=[]
@@ -72,6 +60,11 @@ def route(start_location,end_location):
         start_location=next_location
     return route
 
+
+def best_route(starting_location,intermediary_location,ending_location):
+    return route(starting_location,intermediary_location)+route(intermediary_location,ending_location)[1:]
+
+
 print("Optimal Route:")
-print(route("E" ,"G")) 
+print(best_route("E","K","G")) 
 
