@@ -1,52 +1,97 @@
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import MinMaxScaler
-from keras.layers import Dense, Dropout
-from keras.models import Sequential
-from keras.optimizers import Adam
+# AI for Autonomous Vehicles - Build a Self-Driving Car
 
+import os
+import random
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
 
+# Creating the architecture of the Neural Network
 
-url="https://raw.githubusercontent.com/PacktPublishing/AI-Crash-Course/master/Chapter%2009/kc_house_data.csv"
-dataset=pd.read_csv(url)
-# print(dataset.head())
+class Network(nn.Module):
+    def __init__(self, input_size, nb_action):
+        super(Network, self).__init__()
+        self.fc1 = nn.Linear(input_size, 30)
+        self.fc2 = nn.Linear(30, nb_action)
 
-#Preparing the data
-X=dataset.iloc[:,3:].values
-X=X[:,np.r_[0:13,14:18]]
-y=dataset.iloc[:,2].values
+    def forward(self, state):
+        x = F.relu(self.fc1(state))
+        return self.fc2(x)
 
-#Splitting the data for training and testing
-X_train,X_test,y_train,y_test=train_test_split(X,y,test_size=0.2,random_state=0)
+# Implementing Experience Replay
 
+class ReplayMemory:
+    def __init__(self, capacity):
+        self.capacity = capacity
+        self.memory = []
 
-#Feature Scaling
-xscaler=MinMaxScaler(feature_range=(0,1))
-X_train=xscaler.fit_transform(X_train)
-X_test=xscaler.transform(X_test)
+    def push(self, event):
+        self.memory.append(event)
+        if len(self.memory) > self.capacity:
+            del self.memory[0]
 
-#target scaling
-yscaler=MinMaxScaler(feature_range=(0,1))
-y_train=yscaler.fit_transform(y_train.reshape(-1,1))#create a fake dimension to avoid errors in format
-y_test=yscaler.transform(y_test.reshape(-1,1))
+    def sample(self, batch_size):
+        samples = zip(*random.sample(self.memory, batch_size))
+        return [torch.cat(items, dim=0) for items in samples]
 
+# Implementing Deep Q-Learning
 
-#Building the neural network
-model=Sequential()
-model.add(Dense(units=64,kernel_initializer='uniform',activation='relu',input_dim=17))
-model.add(Dense(units=16,kernel_initializer='uniform',activation='relu'))
-model.add(Dense(units=1,kernel_initializer='uniform',activation='relu'))
-model.compile(optimizer=Adam(learning_rate=0.001),loss='mse',metrics=['mean_absolute_error'])
+class Dqn:
+    def __init__(self, input_size, nb_action, gamma):
+        self.gamma = gamma
+        self.model = Network(input_size, nb_action)
+        self.memory = ReplayMemory(capacity=100000)
+        self.optimizer = optim.Adam(self.model.parameters())
+        self.last_state = torch.zeros(1, input_size)
+        self.last_action = 0
+        self.last_reward = 0
 
+    def select_action(self, state):
+        with torch.no_grad():
+            probs = F.softmax(self.model(state) * 100, dim=1)
+            action = probs.multinomial(num_samples=1)
+            return action.item()
 
-#Training the model
-model.fit(X_train,y_train,batch_size=32,epochs=100,validation_data=(X_test,y_test))
+    def learn(self, batch_states, batch_actions, batch_rewards, batch_next_states):
+        current_q_values = self.model(batch_states).gather(1, batch_actions.unsqueeze(1)).squeeze(1)
+        next_q_values = self.model(batch_next_states).detach().max(1)[0]
+        target_q_values = batch_rewards + self.gamma * next_q_values
+        loss = F.smooth_l1_loss(current_q_values, target_q_values)
 
-#Making predictions
-y_test=yscaler.inverse_transform(y_test)
-prediction=yscaler.inverse_transform(model.predict(X_test))
+        self.optimizer.zero_grad()
+        loss.backward()
+        self.optimizer.step()
 
+    def update(self, new_state, new_reward):
+        new_state = torch.tensor(new_state, dtype=torch.float32).unsqueeze(0)
+        self.memory.push((
+            self.last_state,
+            torch.tensor([self.last_action], dtype=torch.long),
+            torch.tensor([self.last_reward], dtype=torch.float32),
+            new_state
+        ))
+        action = self.select_action(new_state)
+        if len(self.memory.memory) > 100:
+            batch = self.memory.sample(100)
+            self.learn(*batch)
+        self.last_state = new_state
+        self.last_action = action
+        self.last_reward = new_reward
+        return action
 
-error=abs(y_test-prediction)/y_test
-print(np.mean(error))
+    def save(self):
+        torch.save({
+            'state_dict': self.model.state_dict(),
+            'optimizer': self.optimizer.state_dict()
+        }, 'last_brain.pth')
+
+    def load(self):
+        if os.path.isfile('last_brain.pth'):
+            print("=> loading checkpoint...")
+            checkpoint = torch.load('last_brain.pth')
+            self.model.load_state_dict(checkpoint['state_dict'])
+            self.optimizer.load_state_dict(checkpoint['optimizer'])
+            print("done!")
+        else:
+            print("no checkpoint found...")
